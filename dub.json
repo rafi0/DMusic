@@ -1,0 +1,28 @@
+﻿{
+  "targetPath": "bin",
+  "authors": [
+    "Rafał Ziemniewski"
+    ],
+  "targetType": "executable",
+    "name": "dmusic",
+    "sourcePaths": ["Source"],
+    "importPaths": ["Source"],
+    "mainSourceFile": "Source/main.d",
+
+  "description": "",
+  "copyright": "Copyright © 2017, Rafał Ziemniewski",
+  "license": "proprietary",
+  "dflags-dmd": ["-J temp", "-J.", "-L-lDerelictASSIMP3"],
+  "dependencies":
+  {
+  "derelict-al": "~>1.0.3",
+  "libasync": "~>0.8.3",
+  "painlessjson": "~>1.3.8",
+  "gfm:sdl2": "~>6.2.10",
+  "gfm:opengl": "~>6.2.10",
+  "gfm:logger": "~>6.2.10",
+  "gfm:assimp": "~>6.2.10",
+  "gfm:freeimage": "~>6.2.10",
+  "wave-d": "~>1.0.6"
+  }
+}
