@@ -29,45 +29,29 @@ struct ToneData
     int buf_size;
 }
 
-class SoundPlayer
+enum ScaleToTargetMax{Yes, No}
+auto convertDataArray(From, To, ScaleToTargetMax scaleToTargetMax)(From[] from)
 {
-	this(SoundTypeUsed[] samplesSoundType = [])
-	{
-		alGenSources(1, &srcId);
-		//updateBuffer(samplesSoundType);
-		handleErr();
-		alSourcei(srcId, AL_LOOPING, buf);
-	}
 
-	void updateBuffer(SoundTypeUsed[] samplesSoundType)
+	static if (scaleToTargetMax == ScaleToTargetMax.Yes)
 	{
-		alBufferData(buf, AL_FORMAT_MONO16, samplesSoundType.ptr, samplesSoundType.length, 44100);
+		auto minmax = from.reduce!(min, max);
+		auto extreme = max(minmax[0].abs, minmax[1].abs);
+		return from.map!(val => 
+			((val / extreme) * To.max.to!float
+			).to!To).array;
 	}
-
-	void play()
-	{
-		alSourcei(srcId, AL_LOOPING, 1);
-		alSourcePlay(srcId);
-	}
-	void stop()
-	{
-		alSourceStop(srcId);
-		alSourcei(srcId, AL_LOOPING, 0);
-	}
-	ALuint buf;
-	ALuint srcId;
-}
-
-auto convertDataArray(From, To)(From[] from)
-{
-	auto minmax = from.reduce!(min, max);
-	auto extreme = max(
+	else
+	{	
+		auto minmax = from.reduce!(min, max);
+		auto extreme = max(
 		std.math.abs(minmax[0]),
 		std.math.abs(minmax[1]));
-	if (extreme == 0)
-		extreme = 1;
-	return from.map!(val => 
-		((val / extreme).to!float).to!To).array; 
+		if (extreme == 0)
+			extreme = 1;
+		return from.map!(val => 
+			((val / extreme).to!float).to!To).array; 
+	}
 }
 
 ALuint createSoundWave(ToneData nd)
@@ -114,16 +98,16 @@ ALuint createSoundWave(ToneData nd)
 	//overdriveSamples(samplesFloat);
 	//distortSamples(samplesFloat);
 	
-	auto samplesSoundType = samplesFloat.convertDataArray!(float, SoundTypeUsed);
+	auto samplesSoundType = samplesFloat.convertDataArray!(float, SoundTypeUsed, ScaleToTargetMax.Yes);
 
 	//alBufferData(buf, AL_FORMAT_STEREO16, samples.ptr, nd.buf_size, nd.sample_rate);
 	//alBufferData(buf, AL_FORMAT_MONO16, samples.ptr, samples.length, (samples.length / nd.seconds).to!int);
 	alBufferData(buf, AL_FORMAT_MONO16, samplesSoundType.ptr, samplesSoundType.length, (samplesSoundType.length / nd.seconds).to!int);
 	//alBufferData(buf, AL_FORMAT_MONO_FLOAT32, samples.ptr, samples.length, (samples.length / nd.seconds).to!int);
 
-	auto s = Sound(nd.sample_rate, 2, samplesFloat);
+	/*auto s = Sound(nd.sample_rate, 2, samplesFloat);
 	string fileName = "_%s.wav".format(nd.freq);
-	s.encodeWAV(fileName);
+	s.encodeWAV(fileName);*/
 	
 	handleErr();
 
@@ -206,6 +190,7 @@ bool isPause(string tone)
 {
 	return tone == "-";
 }
+
 
 class Tone
 {
