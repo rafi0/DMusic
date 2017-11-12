@@ -1,3 +1,5 @@
+module Core.RecompileOwnProject;
+
 import core.simd, core.stdc.stdlib, core.runtime, core.thread, std.algorithm,
     std.array, std.conv, std.datetime, std.file, std.format, std.functional,
     std.json, std.math, std.meta, std.numeric, std.parallelism, std.path,

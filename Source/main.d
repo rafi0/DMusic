@@ -1,8 +1,9 @@
 import core.simd, core.stdc.stdlib, core.runtime, core.thread, std.algorithm,
-    std.array, std.conv, std.datetime, std.file, std.format, std.functional,
+    std.array, std.conv, std.file, std.format, std.functional,
     std.json, std.math, std.meta, std.numeric, std.parallelism, std.path,
-    std.process, std.random, std.range, std.signals, std.stdio, std.string,
-    std.traits, std.typecons, std.typetuple, std.variant, std.encoding;
+    std.random, std.range, std.signals, std.stdio, std.string,
+    std.traits, std.typecons, std.typetuple, std.variant, std.encoding,
+    std.complex;
 
 import libasync;
 import libasync.watcher;
@@ -10,7 +11,11 @@ import libasync.threads;
 
 import derelict.openal.al;
 
+import Core.RecompileOwnProject;
+import Core.Utils.Config;
+import Core.Utils.Log;
 import Core.Utils.RandomGenerator;
+import Core.Utils.StopWatch;
 import Guitar.Tone;
 
 ALCdevice* dev;
@@ -18,19 +23,21 @@ ALCcontext* ctx;
 
 void initAl()
 {
+    Log.write("Init openAL");
     DerelictAL.load();
 
     const defname = alcGetString(null, ALC_DEFAULT_DEVICE_SPECIFIER);
     //writefln("Default device: %s", defname);
 
     dev = alcOpenDevice(defname);
-    ALCcontext* ctx = alcCreateContext(dev, null);
+    ctx = alcCreateContext(dev, null);
 
     alcMakeContextCurrent(ctx);
 }
 
 void exit_al()
 {
+    Log.write("Deinit openAL");
     ctx = alcGetCurrentContext();
     dev = alcGetContextsDevice(ctx);
 
@@ -132,13 +139,20 @@ class TimeSignature
     int barLength;
 }
 
-Tone[] getGuitarStringStartingOnTone(string tone, int octave = 0)
+Tone[] getToneSpectrum(string tone)
 {
     Tone[] eString;
     eString ~= new Tone("e");
     foreach (_; 0 .. 100)
         eString ~= eString[$ - 1].getRelativeTone(1);
 
+    return eString;
+}
+
+Tone[] getGuitarStringStartingOnTone(string tone, int octave = 0)
+{
+    Tone[] eString = getToneSpectrum("e");
+    
     Tone[] guitarString;
     guitarString ~= eString.find!(a => a.tone == tone && a.octave == octave)[0];
     foreach (_; 0 .. 24)
@@ -191,8 +205,7 @@ int toneDistanceClosest(string aTone, string bTone)
 
 enum int[][MusicalScale] scaleDistances = [
     MusicalScale.Pentatonic : [0, 3, 5, 7, 10,],
-    MusicalScale.Major : [0, 2, 3, 5, 7, 8, 10,],
-    MusicalScale.Gama : [0, 2, 4, 5, 7, 9, 11],
+    MusicalScale.Major : [0, 2, 4, 5, 7, 9, 11],
     ];
 
 enum int[][Chord] chordDistances = [
@@ -235,6 +248,11 @@ Tone[] getScaleTones(string rootTone, MusicalScale scale)
 bool toneisPartOfChord(Tone tone, string rootTone, Chord chord)
 {
     return tone.toneAmong(getChordTones(new Tone(rootTone), chord));
+}
+
+Tone[] getChordTones(string rootTone, Chord chord)
+{
+    return getChordTones(new Tone(rootTone), chord);
 }
 
 Tone[] getChordTones(const Tone rootTone, Chord chord)
@@ -506,99 +524,92 @@ class GuitarTrack
     TimeSignature timeSignature;
 }
 
-class StopWatch
+struct FrequencySpectrum
 {
-    Duration refreshInterval;
-    SysTime lastTime;
-
-    this(Duration refreshInterval = dur!"msecs"(1000))
+    float[int] frequenciesAggregated;
+    static const noiseThreshold = 30;
+    
+    void addFrequency(float freq, float magnitude)
     {
-        this.refreshInterval = refreshInterval;
-        lastTime = Clock.currTime();
-    }
+        // Dont know why those frequencies appear in the signal.
+        // They mess up the data, so we ignore them.
+        if (freq < 80)
+            return;
 
-    bool timePassed()
-    {
-        auto currentTime = Clock.currTime();
-        if (lastTime + refreshInterval < currentTime)
+        const bucketSize = 2;
+        foreach(step; 0..100)
         {
-            lastTime = currentTime;
-            return true;
+            const currentBucket = step * bucketSize;
+            if (freq < currentBucket)
+            {
+                frequenciesAggregated[currentBucket] += magnitude;
+                break;
+            }
         }
-        return false;
+    }
+
+    void trimIrrelevant()
+    {
+        const frequencyRelevanceThreshold 
+            = getFrequencyWithBiggestMagnitude() / 2.;
+        foreach(k, v; frequenciesAggregated)
+        {
+            if (v < frequencyRelevanceThreshold)
+                frequenciesAggregated.remove(k);
+
+        }
+    }
+
+    int getFrequencyWithBiggestMagnitude()
+    {
+        return getFrequenciesWithBiggestMagnitude(1)[0];
+    }
+    
+    int[] getFrequenciesWithBiggestMagnitude(int topCount = 3)
+    {
+        auto reverseSortedByMagnitude =
+            frequenciesAggregated
+                .byKeyValue
+                .array
+                .sort!((a, b) => a.value < b.value)
+                .retro;
+                
+        int[] frequencies;
+        if (reverseSortedByMagnitude.length < topCount)
+        {
+            frequencies ~= 0;
+        }
+        else
+        {
+            frequencies ~= reverseSortedByMagnitude[0..topCount]
+                .map!(kv => kv.key)
+                .array
+                .sort
+                .array;
+        }
+
+        return frequencies;
+    }
+
+    int getLowestFrequency()
+    {
+        auto sortedFrequencies = frequenciesAggregated.byKey.array.sort;
+        return sortedFrequencies.empty ? 0 : sortedFrequencies[0];
     }
 }
 
-string asString(JSONValue v) 
+float magnitude(Complex!double val)
 {
-    if(v.type == JSON_TYPE.FLOAT)
-        return v.floating.to!string;
-    else if(v.type == JSON_TYPE.INTEGER)
-        return v.integer.to!string;
-    else if(v.type == JSON_TYPE.UINTEGER) 
-        return v.uinteger.to!string;
-    else if(v.type == JSON_TYPE.TRUE)
-        return "true";
-    else if(v.type == JSON_TYPE.FALSE)
-        return "false";
-    else if(v.type == JSON_TYPE.ARRAY)
-        return v.array.to!string;
-    throw new Exception("unexpected type: " ~ to!string(v.type));
-}
-
-class Config
-{
-    JSONValue json;
-    StopWatch stopWatch;
-    static Config singleton;
-    string fileName = "config.cfg";
-
-    this()
-    {
-        stopWatch = new StopWatch();
-        if (!fileName.exists)
-            std.file.write(fileName, "{}");
-        refreshJson();
-    }
-
-    void refreshJson()
-    {
-        //"refreshing config".writeln;
-        string fileContent = fileName.readText;
-        json = fileContent.parseJSON;
-    }
-
-    static T getValue(T)(string valueName)
-    {
-        if (singleton is null)
-            singleton = new Config();
-        return singleton.getValueImpl!T(valueName);
-    }
-
-    T getValueImpl(T)(string valueName)
-    {
-        if (valueName !in json)
-        {   
-            json.object[valueName] = JSONValue(T.init);
-            std.file.write(fileName, json.toPrettyString);
-        }
-
-        if (stopWatch.timePassed)
-            return json[valueName].asString.to!T;
-
-        refreshJson();
-
-        return json[valueName].asString.to!T;
-    }
+    return sqrt(val.re.pow(2) + val.im.pow(2));
 }
 
 void recordAndPlayInput()
 {
     ALuint source;
     ALuint[3] buffers;
-    SoundTypeUsed[5000] samples;
+    SoundTypeUsed[2.pow(13)] samples;
     ALuint buf;
-    ALint val;
+    ALint samplingValue;
     const sample_rate = 44100;
 
     alGenSources(1, &source);
@@ -610,7 +621,6 @@ void recordAndPlayInput()
     alSourceQueueBuffers(source, 3, buffers.ptr);
 
     alDistanceModel(AL_NONE);
-
     StopWatch sw = new StopWatch(dur!"msecs"(300));
 
     dev = alcCaptureOpenDevice(null, sample_rate, AL_FORMAT_MONO16, samples.length/2);
@@ -620,18 +630,84 @@ void recordAndPlayInput()
 
     while (Config.getValue!bool("keepRunning"))
     {
-        alGetSourcei(source, AL_BUFFERS_PROCESSED, &val);
-        if(val <= 0)
+        alGetSourcei(source, AL_BUFFERS_PROCESSED, &samplingValue);
+        if(samplingValue <= 0)
             continue;
 
-        alcGetIntegerv(dev, ALC_CAPTURE_SAMPLES, 1, &val);
+        alcGetIntegerv(dev, ALC_CAPTURE_SAMPLES, 1, &samplingValue);
 
-        alcCaptureSamples(dev, samples.ptr, val);
+        alcCaptureSamples(dev, samples.ptr, samplingValue);
+
+        foreach(ref s; samples)
+        {
+            if (s < FrequencySpectrum.noiseThreshold)
+                s = 0;
+        }
+
+		auto minmax = samples.reduce!(min, max);
+		auto extreme = max(
+			std.math.abs(minmax[0]),
+			std.math.abs(minmax[1]));
+
+        auto floatSamples = samples.to!(float[])
+            .map!(v => v / extreme);
+
+        auto fftData = floatSamples.fft();
 
         if (sw.timePassed)
-            samples.array.stride(500).writeln;
+        {
+            FrequencySpectrum fs;
 
-        // TODO FFT here
+            float[] magnitudes;
+
+            foreach(i, v; fftData[0..$/2])
+            {
+                //if (v.re > FrequencySpectrum.noiseThreshold)
+                {
+                    auto freqBin = i * 44100 / samples.length;
+                    auto magnitude = v.magnitude;
+                    if (magnitude > 1.1)
+                    {
+                        magnitudes ~= magnitude;
+                        fs.addFrequency(freqBin, magnitude);
+                    }
+                }
+            }
+
+            fs.trimIrrelevant;
+
+            version(none)
+            "mainFrequency: %s"
+                .format(fs.getFrequencyWithBiggestMagnitude)
+                .writeln;
+            //version(none)
+            if (!magnitudes.empty)
+            {
+                version(none)
+                "max=%s, avg: %s, distinctFrequencies=%s, mainFrequency:%s, lowestFrequency:%s".format(
+                    magnitudes.reduce!max,
+                    magnitudes.sum/magnitudes.length,
+                    magnitudes.length,
+                    fs.getFrequencyWithBiggestMagnitude,
+                    fs.getLowestFrequency)
+                    .writeln;
+
+                version(none)
+                {
+                    foreach(k; fs.frequenciesAggregated.keys.sort)
+                        "[%s, %s], ".format(k, fs.frequenciesAggregated[k]).write;
+                    writeln;
+                }
+
+                fs.getFrequencyWithBiggestMagnitude
+                    .getToneFromFrequency
+                    .tone
+                    .writeln;
+                version(none)
+                fs.getFrequenciesWithBiggestMagnitude
+                    .writeln;
+            }
+        }
 
         void distortSamples(T)(ref T[] samples)
         {
@@ -643,12 +719,12 @@ void recordAndPlayInput()
         }
 
         alSourceUnqueueBuffers(source, 1, &buf);
-        alBufferData(buf, AL_FORMAT_MONO16, samples.ptr, val*2, sample_rate);
+        alBufferData(buf, AL_FORMAT_MONO16, samples.ptr, samplingValue*2, sample_rate);
         alSourceQueueBuffers(source, 1, &buf);
 
-        alGetSourcei(source, AL_SOURCE_STATE, &val);
+        alGetSourcei(source, AL_SOURCE_STATE, &samplingValue);
 
-        if(val != AL_PLAYING)
+        if(samplingValue != AL_PLAYING)
             alSourcePlay(source);
     }
 
@@ -661,21 +737,59 @@ void recordAndPlayInput()
     alDeleteBuffers(1, &buf);
 }
 
+Tone getToneFromFrequency(float frequency)
+{
+    auto noteSpectrum = getToneSpectrum("e");
+    float closestFrequency = float.max;
+    Tone result;
+    foreach(n; noteSpectrum)
+    {
+        float frequencyDistance = (n.getFrequency - frequency).abs;
+
+        if (frequencyDistance < closestFrequency)
+        {
+            closestFrequency = frequencyDistance;
+            result = n;
+        }
+    }
+    return result;
+}
+
 void main()
 {
     initAl();
 
+    getToneFromFrequency(82).tone.writeln;
+    getToneFromFrequency(110).tone.writeln;
+    getToneFromFrequency(115).tone.writeln;
+
     recordAndPlayInput();
+
+    RecompileOwnProject rop;
+    rop.checkChanges;
 
     //"d".getChordTones(Chord.PowerChord).playTones(dur!"msecs"(550));
     
+    version(none)
     auto fbs = new FretboardState(
         getFretboardInTuning("e"),
         (tone, x, y) => write("|" ~ (tone.tone.length == 1 ? tone.tone ~ " " : tone.tone)),
         (tone, x, y) => write("|  "),
         (tones) => writeln
     );
-    
+
+    version(none)
+    {
+        auto fbs = new FretboardState(
+            getFretboardInTuning("e"),
+            (tone, x, y) => write("| %.f".format(tone.getFrequency)),
+            (tone, x, y) => write("| %.f".format(tone.getFrequency)),
+            (tones) => writeln
+        );
+
+        fbs.setPlayedTones(getGuitarStringStartingOnTone("e"));
+    }
+
     //fbs.setPlayedTones("e".getChordTones(Chord.PowerChord));
 
     //TODO fix
@@ -801,11 +915,11 @@ void main()
             ]
         );
 
-        auto currentTime = std.datetime.systime.Clock.currTime();
+        /*auto currentTime = std.datetime.systime.Clock.currTime();
 
         std.file.write(format("music/music_%s_%s_%s_%s_%s.txt", currentTime.month, currentTime.day, currentTime.hour, currentTime.minute, currentTime.second), gt.serializeData());
         gt.serializeData().writeln;
-        gt.deserializeData(gt.serializeData());
+        gt.deserializeData(gt.serializeData());*/
         gt.playCurrentSounds();
     }
 
@@ -819,7 +933,7 @@ void main()
 
     version (none)
     getFretboardInTuning("e").each!((str) {
-        str.map!(n => n.tone.toneIsInScale("e", MusicalScale.Major)
+        str.map!(n => n.tone.toneIsInScale("g", MusicalScale.Gama)
             ? n.tone 
             : n.tone.length == 1 
                 ? " "

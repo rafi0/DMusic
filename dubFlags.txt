@@ -1,0 +1,2 @@
+﻿"dflags-dmd": ["-vgc"],
+"targetPath": "Bin",

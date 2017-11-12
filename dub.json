@@ -12,7 +12,7 @@
   "description": "",
   "copyright": "Copyright © 2017, Rafał Ziemniewski",
   "license": "proprietary",
-  "dflags-dmd": ["-J temp", "-J.", "-L-lDerelictASSIMP3"],
+  "dflags-dmd": [""],
   "dependencies":
   {
   "derelict-al": "~>1.0.3",

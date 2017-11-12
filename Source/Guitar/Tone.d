@@ -29,19 +29,18 @@ struct ToneData
     int buf_size;
 }
 
-enum ScaleToTargetMax{Yes, No}
-auto convertDataArray(From, To, ScaleToTargetMax scaleToTargetMax)(From[] from)
+enum ScalingOption{ToMax, Normalize}
+auto convertDataArray(From, To, ScalingOption scalingOption)(From[] from)
 {
-
-	static if (scaleToTargetMax == ScaleToTargetMax.Yes)
+	static if (scalingOption == ScalingOption.ToMax)
 	{
 		auto minmax = from.reduce!(min, max);
-		auto extreme = max(minmax[0].abs, minmax[1].abs);
+		auto extreme = max(std.math.abs(minmax[0]), std.math.abs(minmax[1]));
 		return from.map!(val => 
 			((val / extreme) * To.max.to!float
 			).to!To).array;
 	}
-	else
+	static if (scalingOption == ScalingOption.Normalize)
 	{	
 		auto minmax = from.reduce!(min, max);
 		auto extreme = max(
@@ -98,7 +97,7 @@ ALuint createSoundWave(ToneData nd)
 	//overdriveSamples(samplesFloat);
 	//distortSamples(samplesFloat);
 	
-	auto samplesSoundType = samplesFloat.convertDataArray!(float, SoundTypeUsed, ScaleToTargetMax.Yes);
+	auto samplesSoundType = samplesFloat.convertDataArray!(float, SoundTypeUsed, ScalingOption.ToMax);
 
 	//alBufferData(buf, AL_FORMAT_STEREO16, samples.ptr, nd.buf_size, nd.sample_rate);
 	//alBufferData(buf, AL_FORMAT_MONO16, samples.ptr, samples.length, (samples.length / nd.seconds).to!int);
